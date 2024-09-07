@@ -18,7 +18,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-#include <U8g2lib.h>
+#include <Arduino.h>
 #include <Wire.h>
 
 #include "tamalib.h"
@@ -28,22 +28,41 @@
 #include "savestate.h"
 #endif
 
-/***** Set display orientation, U8G2_MIRROR_VERTICAL is not supported *****/
-//#define U8G2_LAYOUT_NORMAL
-#define U8G2_LAYOUT_ROTATE_180
-//#define U8G2_LAYOUT_MIRROR
-/**************************************************************************/
+#ifdef USE_PX_MATRIX
+#include <PxMatrix.h>
 
-#ifdef U8G2_LAYOUT_NORMAL
-U8G2_SSD1306_128X64_NONAME_2_HW_I2C display(U8G2_R0);
-#endif
+// see readme https://github.com/2dom/PxMatrix
+#define A D1
+#define B D2
+#define C D8
+#define LAT D0
+#define P_OE D4
 
-#ifdef U8G2_LAYOUT_ROTATE_180
-U8G2_SSD1306_128X64_NONAME_2_HW_I2C display(U8G2_R2);
-#endif
+PxMATRIX matrix(32, 16, LAT, P_OE, A, B, C);
+const uint16_t color = matrix.color565(127, 0, 0); // red, medium-brightness
+#else
+#include <RGBmatrixPanel.h>
 
-#ifdef U8G2_LAYOUT_MIRROR
-U8G2_SSD1306_128X64_NONAME_2_HW_I2C display(U8G2_MIRROR);
+// Most of the signal pins are configurable, but the CLK pin has some
+// special constraints.  On 8-bit AVR boards it must be on PORTB...
+// Pin 11 works on the Arduino Mega.  On 32-bit SAMD boards it must be
+// on the same PORT as the RGB data pins (D2-D7)...
+// Pin 8 works on the Adafruit Metro M0 or Arduino Zero,
+// Pin A4 works on the Adafruit Metro M4 (if using the Adafruit RGB
+// Matrix Shield, cut trace between CLK pads and run a wire to A4).
+
+#define CLK  8   // USE THIS ON ADAFRUIT METRO M0, etc.
+//#define CLK A4 // USE THIS ON METRO M4 (not M0)
+//#define CLK 11 // USE THIS ON ARDUINO MEGA
+#define OE   9
+#define LAT 10
+#define A   A0
+#define B   A1
+#define C   A2
+#define D   A3
+
+RGBmatrixPanel matrix(A, B, C, D, CLK, LAT, OE, false);
+const uint16_t color = matrix.Color888(127, 0, 0); // red, medium-brightness
 #endif
 
 #if defined(ESP8266_KIT_A)
@@ -76,7 +95,6 @@ void displayTama();
 static uint16_t current_freq = 0;
 static bool_t matrix_buffer[LCD_HEIGHT][LCD_WIDTH / 8] = {{0}};
 //static byte runOnceBool = 0;
-static bool_t icon_buffer[ICON_NUM] = {0};
 static cpu_state_t cpuState;
 static unsigned long lastSaveTimestamp = 0;
 /************************************/
@@ -131,7 +149,7 @@ static void hal_set_lcd_matrix(u8_t x, u8_t y, bool_t val)
 
 static void hal_set_lcd_icon(u8_t icon, bool_t val)
 {
-  icon_buffer[icon] = val;
+  // TODO: light up an LED for the corresponding icon
 }
 
 static void hal_set_frequency(u32_t freq)
@@ -246,101 +264,51 @@ static hal_t hal = {
     .handler = &hal_handler,
 };
 
-void drawTriangle(uint8_t x, uint8_t y)
-{
-  // display.drawLine(x,y,x+6,y);
-  display.drawLine(x + 1, y + 1, x + 5, y + 1);
-  display.drawLine(x + 2, y + 2, x + 4, y + 2);
-  display.drawLine(x + 3, y + 3, x + 3, y + 3);
-}
+// void drawTriangle(uint8_t x, uint8_t y)
+// {
+//   // display.drawLine(x,y,x+6,y);
+//   display.drawLine(x + 1, y + 1, x + 5, y + 1);
+//   display.drawLine(x + 2, y + 2, x + 4, y + 2);
+//   display.drawLine(x + 3, y + 3, x + 3, y + 3);
+// }
 
-void drawTamaRow(uint8_t tamaLCD_y, uint8_t ActualLCD_y, uint8_t thick)
+void drawTamaRow(uint8_t y)
 {
-  uint8_t i;
-  for (i = 0; i < LCD_WIDTH; i++)
+  uint8_t x;
+  for (x = 0; x < LCD_WIDTH; x++)
   {
     uint8_t mask = 0b10000000;
-    mask = mask >> (i % 8);
-    if ((matrix_buffer[tamaLCD_y][i / 8] & mask) != 0)
+    mask = mask >> (x % 8);
+    if ((matrix_buffer[y][x / 8] & mask) != 0)
     {
-      display.drawBox(i + i + i + 16, ActualLCD_y, 2, thick);
+      matrix.drawPixel(x, y, color);
     }
   }
 }
 
-void drawTamaSelection(uint8_t y)
-{
-  uint8_t i;
-  for (i = 0; i < 7; i++)
-  {
-    if (icon_buffer[i])
-      drawTriangle(i * 16 + 5, y);
-    display.drawXBMP(i * 16 + 4, y + 6, 16, 9, bitmaps + i * 18);
-  }
-  if (icon_buffer[7])
-  {
-    drawTriangle(7 * 16 + 5, y);
-    display.drawXBMP(7 * 16 + 4, y + 6, 16, 9, bitmaps + 7 * 18);
-  }
-}
+// void drawTamaSelection(uint8_t y)
+// {
+//   uint8_t i;
+//   for (i = 0; i < 7; i++)
+//   {
+//     if (icon_buffer[i])
+//       drawTriangle(i * 16 + 5, y);
+//     display.drawXBMP(i * 16 + 4, y + 6, 16, 9, bitmaps + i * 18);
+//   }
+//   if (icon_buffer[7])
+//   {
+//     drawTriangle(7 * 16 + 5, y);
+//     display.drawXBMP(7 * 16 + 4, y + 6, 16, 9, bitmaps + 7 * 18);
+//   }
+// }
 
 void displayTama()
 {
-  uint8_t j;
-  display.firstPage();
-#ifdef U8G2_LAYOUT_ROTATE_180
-  drawTamaSelection(49);
-  display.nextPage();
-
-  for (j = 11; j < LCD_HEIGHT; j++)
+  matrix.fillScreen(0);
+  for (int y = 0; y < LCD_HEIGHT; y++)
   {
-    drawTamaRow(j, j + j + j, 2);
+    drawTamaRow(y);
   }
-  display.nextPage();
-
-  for (j = 5; j <= 10; j++)
-  {
-    if (j == 5)
-    {
-      drawTamaRow(j, j + j + j + 1, 1);
-    }
-    else
-    {
-      drawTamaRow(j, j + j + j, 2);
-    }
-  }
-  display.nextPage();
-
-  for (j = 0; j <= 5; j++)
-  {
-    if (j == 5)
-    {
-      drawTamaRow(j, j + j + j, 1);
-    }
-    else
-    {
-      drawTamaRow(j, j + j + j, 2);
-    }
-  }
-  display.nextPage();
-#else
-  for (j = 0; j < LCD_HEIGHT; j++)
-  {
-    if (j != 5)
-      drawTamaRow(j, j + j + j, 2);
-    if (j == 5)
-    {
-      drawTamaRow(j, j + j + j, 1);
-      display.nextPage();
-      drawTamaRow(j, j + j + j + 1, 1);
-    }
-    if (j == 10)
-      display.nextPage();
-  }
-  display.nextPage();
-  drawTamaSelection(49);
-  display.nextPage();
-#endif
 }
 
 #ifdef ENABLE_DUMP_STATE_TO_SERIAL_WHEN_START
@@ -381,18 +349,6 @@ void dumpStateToSerial()
 }
 #endif
 
-uint8_t reverseBits(uint8_t num)
-{
-  uint8_t reverse_num = 0;
-  uint8_t i;
-  for (i = 0; i < 8; i++)
-  {
-    if ((num & (1 << i)))
-      reverse_num |= 1 << ((8 - 1) - i);
-  }
-  return reverse_num;
-}
-
 void setup()
 {
   Serial.begin(SERIAL_BAUD);
@@ -400,9 +356,9 @@ void setup()
   pinMode(PIN_BTN_L, INPUT);
   pinMode(PIN_BTN_M, INPUT);
   pinMode(PIN_BTN_R, INPUT);
-  pinMode(PIN_BUZZER, OUTPUT);
+  // pinMode(PIN_BUZZER, OUTPUT);
 
-  display.begin();
+  matrix.begin();
 
   tamalib_register_hal(&hal);
   tamalib_set_framerate(TAMA_DISPLAY_FRAMERATE);

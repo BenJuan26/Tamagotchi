@@ -30,6 +30,8 @@
 
 #ifdef USE_PX_MATRIX
 #include <PxMatrix.h>
+#include <Ticker.h>
+Ticker display_ticker;
 
 // see readme https://github.com/2dom/PxMatrix
 #define A D1
@@ -38,8 +40,29 @@
 #define LAT D0
 #define P_OE D4
 
+// #define PxMATRIX_double_buffer true
+
+// This defines the 'on' time of the display is us. The larger this number,
+// the brighter the display. If too large the ESP will crash
+uint8_t display_draw_time=60; //30-70 is usually fine
+
 PxMATRIX matrix(32, 16, LAT, P_OE, A, B, C);
 const uint16_t color = matrix.color565(127, 0, 0); // red, medium-brightness
+
+// ISR for display refresh
+void display_updater()
+{
+  matrix.display(display_draw_time);
+}
+
+void display_update_enable(bool is_enable)
+{
+  if (is_enable)
+    display_ticker.attach(0.004, display_updater);
+  else
+    display_ticker.detach();
+
+}
 #else
 #include <RGBmatrixPanel.h>
 
@@ -309,6 +332,9 @@ void displayTama()
   {
     drawTamaRow(y);
   }
+// #ifdef USE_PX_MATRIX
+//   matrix.showBuffer();
+// #endif
 }
 
 #ifdef ENABLE_DUMP_STATE_TO_SERIAL_WHEN_START
@@ -379,6 +405,10 @@ void setup()
 
 #ifdef ENABLE_DUMP_STATE_TO_SERIAL_WHEN_START
   dumpStateToSerial();
+#endif
+
+#ifdef USE_PX_MATRIX
+  display_update_enable(true);
 #endif
 }
 

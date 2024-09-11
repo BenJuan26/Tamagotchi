@@ -28,17 +28,17 @@
 #include "savestate.h"
 #endif
 
-#ifdef USE_PX_MATRIX
+#if defined(USE_PX_MATRIX)
 #include <PxMatrix.h>
 #include <Ticker.h>
 Ticker display_ticker;
 
 // see readme https://github.com/2dom/PxMatrix
-#define A D1
-#define B D2
-#define C D8
-#define LAT D0
-#define P_OE D4
+#define A 19
+#define B 23
+#define C 18
+#define LAT 22
+#define P_OE 16
 
 // #define PxMATRIX_double_buffer true
 
@@ -88,10 +88,12 @@ RGBmatrixPanel matrix(A, B, C, D, CLK, LAT, OE, false);
 const uint16_t color = matrix.Color888(127, 0, 0); // red, medium-brightness
 #endif
 
+#define PRESSED HIGH
+
 #if defined(ESP8266_KIT_A)
-#define PIN_BTN_L 12
-#define PIN_BTN_M 13
-#define PIN_BTN_R 15
+#define PIN_BTN_L D3
+#define PIN_BTN_M 7
+#define PIN_BTN_R 13
 #define PIN_BUZZER 2
 #elif defined(ESP8266_KIT_B)
 #define PIN_BTN_L 12
@@ -101,10 +103,11 @@ const uint16_t color = matrix.Color888(127, 0, 0); // red, medium-brightness
 #define ENABLE_TAMA_SOUND
 #define ENABLE_TAMA_SOUND_ACTIVE_LOW
 #elif defined(ESP32)
-#define PIN_BTN_L 255
-#define PIN_BTN_M 255
-#define PIN_BTN_R 255
+#define PIN_BTN_L 4
+#define PIN_BTN_M 0
+#define PIN_BTN_R 2
 #define PIN_BUZZER 255
+#define PRESSED LOW
 #else
 #define PIN_BTN_L 2
 #define PIN_BTN_M 3
@@ -143,7 +146,11 @@ static void hal_sleep_until(timestamp_t ts)
 
 static timestamp_t hal_get_timestamp(void)
 {
+#if defined(ESP32)
+  return esp_timer_get_time();
+#else
   return millis() * 1000;
+#endif
 }
 
 static void hal_update_screen(void)
@@ -197,7 +204,7 @@ static void hal_play_frequency(bool_t en)
 #endif
 }
 
-static bool_t button4state = 0;
+// static bool_t button4state = 0;
 
 static int hal_handler(void)
 {
@@ -232,7 +239,7 @@ static int hal_handler(void)
     }
   }
 #else
-  if (digitalRead(PIN_BTN_L) == HIGH)
+  if (digitalRead(PIN_BTN_L) == PRESSED)
   {
     hw_set_button(BTN_LEFT, BTN_STATE_PRESSED);
   }
@@ -240,7 +247,7 @@ static int hal_handler(void)
   {
     hw_set_button(BTN_LEFT, BTN_STATE_RELEASED);
   }
-  if (digitalRead(PIN_BTN_M) == HIGH)
+  if (digitalRead(PIN_BTN_M) == PRESSED)
   {
     hw_set_button(BTN_MIDDLE, BTN_STATE_PRESSED);
   }
@@ -248,7 +255,7 @@ static int hal_handler(void)
   {
     hw_set_button(BTN_MIDDLE, BTN_STATE_RELEASED);
   }
-  if (digitalRead(PIN_BTN_R) == HIGH)
+  if (digitalRead(PIN_BTN_R) == PRESSED)
   {
     hw_set_button(BTN_RIGHT, BTN_STATE_PRESSED);
   }
@@ -379,9 +386,9 @@ void setup()
 {
   Serial.begin(SERIAL_BAUD);
 
-  pinMode(PIN_BTN_L, INPUT);
-  pinMode(PIN_BTN_M, INPUT);
-  pinMode(PIN_BTN_R, INPUT);
+  pinMode(PIN_BTN_L, INPUT_PULLUP);
+  pinMode(PIN_BTN_M, INPUT_PULLUP);
+  pinMode(PIN_BTN_R, INPUT_PULLUP);
   // pinMode(PIN_BUZZER, OUTPUT);
 
   matrix.begin();
@@ -390,9 +397,8 @@ void setup()
   tamalib_set_framerate(TAMA_DISPLAY_FRAMERATE);
   tamalib_init(1000000);
 
-  initEEPROM();
-
 #ifdef ENABLE_LOAD_STATE_FROM_EEPROM
+  initEEPROM();
   if (validEEPROM())
   {
     loadStateFromEEPROM(&cpuState);
@@ -400,6 +406,7 @@ void setup()
     Serial.println(F("No magic number in state, skipping state restore"));
   }
 #elif ENABLE_LOAD_HARCODED_STATE_WHEN_START
+  initEEPROM();
   loadHardcodedState();
 #endif
 
@@ -410,6 +417,8 @@ void setup()
 #ifdef USE_PX_MATRIX
   display_update_enable(true);
 #endif
+
+  Serial.println("initialized");
 }
 
 uint32_t right_long_press_started = 0;
@@ -424,7 +433,7 @@ void loop()
     saveStateToEEPROM(&cpuState);
   }
 
-  if (digitalRead(PIN_BTN_M) == HIGH) {
+  if (digitalRead(PIN_BTN_M) == PRESSED) {
     if (millis() - right_long_press_started > AUTO_SAVE_MINUTES * 1000) 
     {
       eraseStateFromEEPROM();

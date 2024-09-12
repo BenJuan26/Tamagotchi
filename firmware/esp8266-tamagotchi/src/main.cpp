@@ -28,6 +28,18 @@
 #include "savestate.h"
 #endif
 
+#if defined(ENABLE_OTA)
+#include <WiFi.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
+
+const char *ssid = "...";
+const char *password = "...";
+#endif
+
+const uint8_t iconPins[ICON_NUM] = {5, 15, 32, 33, 25, 26, 27, 21};
+
 #if defined(USE_PX_MATRIX)
 #include <PxMatrix.h>
 #include <Ticker.h>
@@ -107,6 +119,7 @@ const uint16_t color = matrix.Color888(127, 0, 0); // red, medium-brightness
 #define PIN_BTN_M 0
 #define PIN_BTN_R 2
 #define PIN_BUZZER 255
+#undef PRESSED
 #define PRESSED LOW
 #else
 #define PIN_BTN_L 2
@@ -179,7 +192,12 @@ static void hal_set_lcd_matrix(u8_t x, u8_t y, bool_t val)
 
 static void hal_set_lcd_icon(u8_t icon, bool_t val)
 {
-  // TODO: light up an LED for the corresponding icon
+  int ledState = LOW;
+  if (val) {
+    ledState = HIGH;
+  }
+
+  digitalWrite(iconPins[icon], ledState);
 }
 
 static void hal_set_frequency(u32_t freq)
@@ -386,10 +404,60 @@ void setup()
 {
   Serial.begin(SERIAL_BAUD);
 
+#if defined(ENABLE_OTA)
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  
+  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+    Serial.println("Connection Failed! Rebooting...");
+    delay(5000);
+    ESP.restart();
+  }
+
+  ArduinoOTA.setHostname("tamagotchi");
+
+  ArduinoOTA
+    .onStart([]() {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
+
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      Serial.println("Start updating " + type);
+    })
+    .onEnd([]() {
+      Serial.println("\nEnd");
+    })
+    .onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    })
+    .onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+
+  ArduinoOTA.begin();
+
+  Serial.println("Ready");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+#endif
+
   pinMode(PIN_BTN_L, INPUT_PULLUP);
   pinMode(PIN_BTN_M, INPUT_PULLUP);
   pinMode(PIN_BTN_R, INPUT_PULLUP);
   // pinMode(PIN_BUZZER, OUTPUT);
+
+  for (int i = 0; i < ICON_NUM; i++) {
+    pinMode(iconPins[i], OUTPUT);
+    digitalWrite(iconPins[i], LOW);
+  }
 
   matrix.begin();
 
@@ -425,6 +493,10 @@ uint32_t right_long_press_started = 0;
 
 void loop()
 {
+#if defined(ENABLE_OTA)
+  ArduinoOTA.handle();
+#endif
+
   tamalib_mainloop_step_by_step();
 #ifdef ENABLE_AUTO_SAVE_STATUS
   if ((millis() - lastSaveTimestamp) > (AUTO_SAVE_MINUTES * 60 * 1000))

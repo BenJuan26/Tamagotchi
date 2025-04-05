@@ -28,15 +28,38 @@
 #include "savestate.h"
 #endif
 
-#if defined(ENABLE_OTA)
+#if defined(ENABLE_OTA) || defined(WEBSERIAL)
 #include <WiFi.h>
+#endif
+
+#if defined(ENABLE_OTA)
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
-
-const char *ssid = "...";
-const char *password = "...";
+#include "wifi_creds.h"
 #endif
+
+#if defined(WEBSERIAL)
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <WebSerial.h>
+
+AsyncWebServer server(80);
+#endif
+
+void print(const char *msg) {
+  Serial.print(msg);
+#if defined(WEBSERIAL)
+  WebSerial.print(msg);
+#endif
+}
+
+void println(const char *msg) {
+  Serial.println(msg);
+#if defined(WEBSERIAL)
+  WebSerial.println(msg);
+#endif
+}
 
 const uint8_t iconPins[ICON_NUM] = {5, 15, 32, 33, 25, 26, 27, 21};
 
@@ -59,7 +82,9 @@ Ticker display_ticker;
 uint8_t display_draw_time=60; //30-70 is usually fine
 
 PxMATRIX matrix(32, 16, LAT, P_OE, A, B, C);
-const uint16_t color = matrix.color565(127, 0, 0); // red, medium-brightness
+const uint8_t bg_data[] = {12, 132, 28, 10, 6, 70, 248, 10, 6, 99, 241, 234, 6, 96, 128, 116, 6, 96, 254, 84, 12, 64, 14, 84, 24, 192, 116, 172, 33, 193, 128, 172, 97, 134, 1, 172, 225, 206, 51, 44, 224, 232, 31, 38, 240, 25, 206, 54, 124, 0, 124, 179, 63, 0, 49, 155, 15, 248, 113, 153, 0, 15, 159, 25};
+const uint16_t bg_green_base = matrix.color565(181, 184, 97);
+const uint16_t bg_blue_base = matrix.color565(105, 169, 167);
 
 // ISR for display refresh
 void display_updater()
@@ -320,18 +345,52 @@ static hal_t hal = {
 //   display.drawLine(x + 3, y + 3, x + 3, y + 3);
 // }
 
+#if defined(DEBUG_DISPLAY)
+unsigned long lastDisplayDebug = 0;
+#endif
+
 void drawTamaRow(uint8_t y)
 {
   uint8_t x;
+#if defined(DEBUG_DISPLAY)
+  char characters[LCD_WIDTH*2+1];
+  characters[LCD_WIDTH*2] = '\0';
+#endif
   for (x = 0; x < LCD_WIDTH; x++)
   {
+    uint16_t color;
     uint8_t mask = 0b10000000;
     mask = mask >> (x % 8);
     if ((matrix_buffer[y][x / 8] & mask) != 0)
     {
-      matrix.drawPixel(x, y, color);
+      color = 0;
+    } else {
+      uint8_t array_index = (x/8) + (y*4);
+      if ((bg_data[array_index] & mask) != 0) {
+        color = bg_blue_base;
+      } else {
+        color = bg_green_base;
+      }
+    }
+    matrix.drawPixel(x, y, color);
+#if defined(DEBUG_DISPLAY)
+    if (color == 0) {
+      characters[x*2] = ' ';
+      characters[x*2 + 1] = ' ';
+    } else if (color == bg_blue_base) {
+      characters[x*2] = '#';
+      characters[x*2 + 1] = '#';
+    } else {
+      characters[x*2] = '=';
+      characters[x*2 + 1] = '=';
     }
   }
+  if (millis() - lastDisplayDebug > 500) {
+    println(characters);
+  }
+#else
+  }
+#endif
 }
 
 // void drawTamaSelection(uint8_t y)
@@ -352,11 +411,16 @@ void drawTamaRow(uint8_t y)
 
 void displayTama()
 {
-  matrix.fillScreen(0);
   for (int y = 0; y < LCD_HEIGHT; y++)
   {
     drawTamaRow(y);
   }
+#if defined(DEBUG_DISPLAY)
+  if (millis() - lastDisplayDebug > 500) {
+    println("");
+    lastDisplayDebug = millis();
+  }
+#endif
 // #ifdef USE_PX_MATRIX
 //   matrix.showBuffer();
 // #endif
@@ -404,7 +468,7 @@ void setup()
 {
   Serial.begin(SERIAL_BAUD);
 
-#if defined(ENABLE_OTA)
+#if defined(ENABLE_OTA) || defined(WEBSERIAL)
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   
@@ -413,7 +477,8 @@ void setup()
     delay(5000);
     ESP.restart();
   }
-
+#endif
+#if defined(ENABLE_OTA)
   ArduinoOTA.setHostname("tamagotchi");
 
   ArduinoOTA
@@ -449,6 +514,11 @@ void setup()
   Serial.println(WiFi.localIP());
 #endif
 
+#if defined(WEBSERIAL)
+  WebSerial.begin(&server);
+  server.begin();
+#endif
+
   pinMode(PIN_BTN_L, INPUT_PULLUP);
   pinMode(PIN_BTN_M, INPUT_PULLUP);
   pinMode(PIN_BTN_R, INPUT_PULLUP);
@@ -471,7 +541,7 @@ void setup()
   {
     loadStateFromEEPROM(&cpuState);
   } else {
-    Serial.println(F("No magic number in state, skipping state restore"));
+    println("No magic number in state, skipping state restore");
   }
 #elif ENABLE_LOAD_HARCODED_STATE_WHEN_START
   initEEPROM();
@@ -486,7 +556,7 @@ void setup()
   display_update_enable(true);
 #endif
 
-  Serial.println("initialized");
+  println("initialized");
 }
 
 uint32_t right_long_press_started = 0;

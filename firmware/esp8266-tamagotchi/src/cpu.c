@@ -27,7 +27,9 @@
 #include "hal.h"
 #include "rom_12bit.h"
 
+#ifndef CPU_SPEED_RATIO
 #define CPU_SPEED_RATIO      0
+#endif
 #define TICK_FREQUENCY        32768 // Hz
 
 #define TIMER_1HZ_PERIOD      32768 // in ticks

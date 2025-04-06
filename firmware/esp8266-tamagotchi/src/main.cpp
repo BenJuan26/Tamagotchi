@@ -29,6 +29,7 @@
 #endif
 
 #if defined(ENABLE_OTA) || defined(WEBSERIAL)
+#include "wifi_creds.h"
 #include <WiFi.h>
 #endif
 
@@ -36,7 +37,6 @@
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
-#include "wifi_creds.h"
 #endif
 
 #if defined(WEBSERIAL)
@@ -75,31 +75,63 @@ Ticker display_ticker;
 #define LAT 22
 #define P_OE 16
 
+#if defined(ESP32)
+hw_timer_t * timer = NULL;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+#endif
+
 // #define PxMATRIX_double_buffer true
 
 // This defines the 'on' time of the display is us. The larger this number,
 // the brighter the display. If too large the ESP will crash
-uint8_t display_draw_time=60; //30-70 is usually fine
+uint8_t display_draw_time=70; //30-70 is usually fine
 
 PxMATRIX matrix(32, 16, LAT, P_OE, A, B, C);
 const uint8_t bg_data[] = {12, 132, 28, 10, 6, 70, 248, 10, 6, 99, 241, 234, 6, 96, 128, 116, 6, 96, 254, 84, 12, 64, 14, 84, 24, 192, 116, 172, 33, 193, 128, 172, 97, 134, 1, 172, 225, 206, 51, 44, 224, 232, 31, 38, 240, 25, 206, 54, 124, 0, 124, 179, 63, 0, 49, 155, 15, 248, 113, 153, 0, 15, 159, 25};
 const uint16_t bg_green_base = matrix.color565(181, 184, 97);
 const uint16_t bg_blue_base = matrix.color565(105, 169, 167);
 
+#if defined(ESP32)
+void IRAM_ATTR display_updater(){
+  // Increment the counter and set the time of ISR
+  portENTER_CRITICAL_ISR(&timerMux);
+  matrix.display(display_draw_time);
+  portEXIT_CRITICAL_ISR(&timerMux);
+}
+#else
 // ISR for display refresh
 void display_updater()
 {
   matrix.display(display_draw_time);
 }
+#endif
 
+#if defined(ESP32)
+void display_update_enable(bool is_enable)
+{
+  if (is_enable)
+  {
+    timer = timerBegin(0, 80, true);
+    timerAttachInterrupt(timer, &display_updater, true);
+    timerAlarmWrite(timer, 4000, true);
+    timerAlarmEnable(timer);
+  }
+  else
+  {
+    timerDetachInterrupt(timer);
+    timerAlarmDisable(timer);
+  }
+}
+#else
 void display_update_enable(bool is_enable)
 {
   if (is_enable)
     display_ticker.attach(0.004, display_updater);
   else
     display_ticker.detach();
-
 }
+#endif
+
 #else
 #include <RGBmatrixPanel.h>
 
@@ -173,15 +205,6 @@ static void hal_log(log_level_t level, char *buff, ...)
   Serial.println(buff);
 }
 
-static void hal_sleep_until(timestamp_t ts)
-{
-  // int32_t remaining = (int32_t) (ts - hal_get_timestamp());
-  // if (remaining > 0) {
-  // delayMicroseconds(1);
-  // delay(1);
-  //}
-}
-
 static timestamp_t hal_get_timestamp(void)
 {
 #if defined(ESP32)
@@ -189,6 +212,14 @@ static timestamp_t hal_get_timestamp(void)
 #else
   return millis() * 1000;
 #endif
+}
+
+static void hal_sleep_until(timestamp_t ts)
+{
+  // int32_t remaining = (int32_t) (ts - hal_get_timestamp());
+  // if (remaining > 0) {
+  //   delayMicroseconds(remaining);
+  // }
 }
 
 static void hal_update_screen(void)
@@ -337,25 +368,9 @@ static hal_t hal = {
     .handler = &hal_handler,
 };
 
-// void drawTriangle(uint8_t x, uint8_t y)
-// {
-//   // display.drawLine(x,y,x+6,y);
-//   display.drawLine(x + 1, y + 1, x + 5, y + 1);
-//   display.drawLine(x + 2, y + 2, x + 4, y + 2);
-//   display.drawLine(x + 3, y + 3, x + 3, y + 3);
-// }
-
-#if defined(DEBUG_DISPLAY)
-unsigned long lastDisplayDebug = 0;
-#endif
-
 void drawTamaRow(uint8_t y)
 {
   uint8_t x;
-#if defined(DEBUG_DISPLAY)
-  char characters[LCD_WIDTH*2+1];
-  characters[LCD_WIDTH*2] = '\0';
-#endif
   for (x = 0; x < LCD_WIDTH; x++)
   {
     uint16_t color;
@@ -373,24 +388,7 @@ void drawTamaRow(uint8_t y)
       }
     }
     matrix.drawPixel(x, y, color);
-#if defined(DEBUG_DISPLAY)
-    if (color == 0) {
-      characters[x*2] = ' ';
-      characters[x*2 + 1] = ' ';
-    } else if (color == bg_blue_base) {
-      characters[x*2] = '#';
-      characters[x*2 + 1] = '#';
-    } else {
-      characters[x*2] = '=';
-      characters[x*2 + 1] = '=';
-    }
   }
-  if (millis() - lastDisplayDebug > 500) {
-    println(characters);
-  }
-#else
-  }
-#endif
 }
 
 // void drawTamaSelection(uint8_t y)
@@ -415,15 +413,6 @@ void displayTama()
   {
     drawTamaRow(y);
   }
-#if defined(DEBUG_DISPLAY)
-  if (millis() - lastDisplayDebug > 500) {
-    println("");
-    lastDisplayDebug = millis();
-  }
-#endif
-// #ifdef USE_PX_MATRIX
-//   matrix.showBuffer();
-// #endif
 }
 
 #ifdef ENABLE_DUMP_STATE_TO_SERIAL_WHEN_START
@@ -483,6 +472,9 @@ void setup()
 
   ArduinoOTA
     .onStart([]() {
+#ifdef USE_PX_MATRIX
+      display_update_enable(false);
+#endif
       String type;
       if (ArduinoOTA.getCommand() == U_FLASH)
         type = "sketch";
@@ -493,6 +485,9 @@ void setup()
       Serial.println("Start updating " + type);
     })
     .onEnd([]() {
+#ifdef USE_PX_MATRIX
+      display_update_enable(true);
+#endif
       Serial.println("\nEnd");
     })
     .onProgress([](unsigned int progress, unsigned int total) {
@@ -572,13 +567,25 @@ void loop()
   if ((millis() - lastSaveTimestamp) > (AUTO_SAVE_MINUTES * 60 * 1000))
   {
     lastSaveTimestamp = millis();
+#if defined(ESP32)
+    display_update_enable(false);
+#endif
     saveStateToEEPROM(&cpuState);
+#if defined(ESP32)
+    display_update_enable(true);
+#endif
   }
 
   if (digitalRead(PIN_BTN_M) == PRESSED) {
     if (millis() - right_long_press_started > AUTO_SAVE_MINUTES * 1000) 
     {
+#if defined(ESP32)
+      display_update_enable(false);
+#endif
       eraseStateFromEEPROM();
+#if defined(ESP32)
+      display_update_enable(true);
+#endif
       #if defined(ESP8266) || defined(ESP32)
       ESP.restart();
       #endif

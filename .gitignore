@@ -2,6 +2,6 @@
 .vscode
 rom
 fp-info-cache
-hardware/Matrix/Matrix-backups
-hardware/Matrix/fab
+hardware/**/*-backups
+hardware/**/fab
 *.kicad*.lck
